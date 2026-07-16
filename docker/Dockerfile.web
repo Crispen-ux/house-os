@@ -1,0 +1,70 @@
+# ============================================================
+# Stage 1: Install dependencies + build
+# ============================================================
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+# Configure pnpm for Docker
+RUN echo "node-linker=hoisted" > .npmrc
+
+# Copy workspace root manifests
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
+
+# Copy package manifests only (for dependency resolution caching)
+COPY apps/web/package.json ./apps/web/
+COPY packages/config/package.json ./packages/config/
+COPY packages/database/package.json ./packages/database/
+COPY packages/types/package.json ./packages/types/
+COPY packages/ui/package.json ./packages/ui/
+
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
+COPY apps/web ./apps/web
+COPY packages ./packages
+
+# Generate Prisma client (needed for type resolution)
+RUN cd packages/database && npx prisma generate
+
+# Build-time API URL (baked into the static bundle)
+ARG NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+# Inject standalone output for Docker (fails on Windows due to symlink perms)
+RUN sed -i "s/const nextConfig: NextConfig = {/const nextConfig: NextConfig = {\n  output: 'standalone',/" apps/web/next.config.ts
+
+RUN pnpm --filter @house-os/web build
+
+# ============================================================
+# Stage 2: Production runner (standalone)
+# ============================================================
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+RUN apk add --no-cache dumb-init curl
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy standalone output (minimal Node.js server)
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
+# Copy static assets
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
+# Copy public assets
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV NODE_ENV=production
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:3000 || exit 1
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "apps/web/server.js"]

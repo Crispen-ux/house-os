@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Household OS",
+    "slug": "household-os",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "scheme": "householdos",
+    "platforms": ["ios", "android"],
+    "splash": {
+      "backgroundColor": "#09090b"
+    }
+  }
+}

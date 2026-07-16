@@ -1,0 +1,859 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleType {
+  OWNER
+  ADMIN
+  ADULT
+  TEEN
+  CHILD
+  GUEST
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  CANCELLED
+}
+
+enum ChoreCategory {
+  KITCHEN
+  CLEANING
+  LAUNDRY
+  GARDEN
+  MAINTENANCE
+  PETS
+  SHOPPING
+  CUSTOM
+}
+
+enum RecurrenceType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+  ONE_TIME
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+  OVERDUE
+}
+
+enum SwapStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
+enum NotificationType {
+  PUSH
+  WHATSAPP
+  EMAIL
+}
+
+enum NotificationChannel {
+  CHORE_ASSIGNED
+  CHORE_COMPLETED
+  CHORE_OVERDUE
+  SWAP_REQUEST
+  SWAP_ACCEPTED
+  SWAP_DECLINED
+  SWAP_CANCELLED
+  ROTATION_CHANGE
+  ACHIEVEMENT_UNLOCKED
+  POINTS_EARNED
+  BIRTHDAY_REMINDER
+  MORNING_REMINDER
+  EVENING_REMINDER
+  MEAL_REMINDER
+  WELCOME
+  INVITATION
+  SYSTEM
+}
+
+enum LeaderboardType {
+  WEEKLY
+  MONTHLY
+  ALL_TIME
+}
+
+model User {
+  id              String   @id @default(uuid()) @db.Uuid
+  email           String   @unique
+  emailVerified   DateTime?
+  passwordHash    String?
+  firstName       String
+  lastName        String
+  displayName     String?
+  avatarUrl       String?
+  phone           String?
+  dateOfBirth     DateTime?
+  timezone        String   @default("UTC")
+  locale          String   @default("en")
+  isActive        Boolean  @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  googleId        String?  @unique
+  microsoftId     String?  @unique
+
+  households      HouseholdMember[]
+  ownedHouseholds Household[]       @relation("HouseholdOwner")
+  choreAssignments TaskAssignment[]
+  choreSwapsRequested ChoreSwap[]   @relation("SwapRequester")
+  choreSwapsReceived  ChoreSwap[]   @relation("SwapRequestedTo")
+  adminOverrideChoreSwap ChoreSwap? @relation("AdminOverride")
+  swapHistory     SwapHistory[]
+  swapMessages     SwapMessage[]
+  notifications    Notification[]
+  pointsHistory    PointsHistory[]
+  achievements     UserAchievement[]
+  userBadges       UserBadge[]
+  rotationRules    RotationRule[]
+  petCareSchedules PetCareSchedule[]
+  maintenanceReminders MaintenanceReminder[]
+  chatMessages     ChatMessage[]
+  aiConversations  AiConversation[]
+  settings         UserSetting?
+  auditLogs        AuditLog[]
+  shoppingItems    ShoppingItem[]
+  mealPlans        MealPlan[]
+  expenseEntries   ExpenseEntry[]
+  electricityReadings ElectricityReading[]
+  waterReadings    WaterReading[]
+  medicineReminders MedicineReminder[]
+  visitorLogs      VisitorLog[]
+  leaderboardEntries LeaderboardEntry[]
+  sentInvitations HouseholdInvitation[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model Household {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  ownerId     String   @db.Uuid
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User              @relation("HouseholdOwner", fields: [ownerId], references: [id])
+  members     HouseholdMember[]
+  chores      Chore[]
+  rotations   Rotation[]
+  taskAssignments TaskAssignment[]
+  shoppingLists ShoppingList[]
+  mealPlans   MealPlan[]
+  recipes     Recipe[]
+  petSchedules PetCareSchedule[]
+  maintenanceReminders MaintenanceReminder[]
+  expenseEntries ExpenseEntry[]
+  visitorLogs VisitorLog[]
+  choreSwaps  ChoreSwap[]
+  pointsHistory PointsHistory[]
+  leaderboards Leaderboard[]
+  chatMessages ChatMessage[]
+  aiConversations AiConversation[]
+  electricityReadings ElectricityReading[]
+  waterReadings WaterReading[]
+  emergencyContacts EmergencyContact[]
+  auditLogs   AuditLog[]
+  settings    HouseholdSetting[]
+  invitations HouseholdInvitation[]
+
+  @@map("households")
+}
+
+model HouseholdMember {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String   @db.Uuid
+  userId      String   @db.Uuid
+  role        RoleType @default(ADULT)
+  nickname    String?
+  joinedAt    DateTime @default(now())
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, userId])
+  @@index([householdId])
+  @@index([userId])
+  @@map("household_members")
+}
+
+model Chore {
+  id            String         @id @default(uuid()) @db.Uuid
+  householdId   String         @db.Uuid
+  category      ChoreCategory  @default(CUSTOM)
+  customCategory String?
+  title         String
+  description   String?
+  instructions  String?
+  points        Int            @default(10)
+  penaltyPoints Int            @default(0)
+  recurrence    RecurrenceType @default(DAILY)
+  isRestricted  Boolean        @default(false)
+  requiresAdult Boolean        @default(false)
+  estimatedMinutes Int?
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  household      Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  assignments    TaskAssignment[]
+  rotationRules  RotationRule[]
+  choreSwaps     ChoreSwap[]     @relation("SwappedChore")
+  alternateSwaps ChoreSwap[]     @relation("AlternateChore")
+  swapHistory    SwapHistory[]
+
+  @@index([householdId])
+  @@index([category])
+  @@map("chores")
+}
+
+model TaskAssignment {
+  id          String     @id @default(uuid()) @db.Uuid
+  choreId     String     @db.Uuid
+  assigneeId  String     @db.Uuid
+  householdId String     @db.Uuid
+  dueDate     DateTime
+  status      TaskStatus @default(PENDING)
+  completedAt DateTime?
+  notes       String?
+  rotationId  String?    @db.Uuid
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  chore     Chore     @relation(fields: [choreId], references: [id], onDelete: Cascade)
+  assignee  User      @relation(fields: [assigneeId], references: [id])
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  rotation  Rotation? @relation(fields: [rotationId], references: [id])
+
+  @@index([assigneeId])
+  @@index([householdId])
+  @@index([dueDate])
+  @@index([status])
+  @@map("task_assignments")
+}
+
+model Rotation {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String   @db.Uuid
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  startDate   DateTime
+  cycleDays   Int      @default(7)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household     Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  rules         RotationRule[]
+  assignments   TaskAssignment[]
+
+  @@index([householdId])
+  @@map("rotations")
+}
+
+model RotationRule {
+  id          String   @id @default(uuid()) @db.Uuid
+  rotationId  String   @db.Uuid
+  choreId     String   @db.Uuid
+  memberId    String   @db.Uuid
+  position    Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rotation Rotation @relation(fields: [rotationId], references: [id], onDelete: Cascade)
+  chore    Chore    @relation(fields: [choreId], references: [id], onDelete: Cascade)
+  member   User     @relation(fields: [memberId], references: [id])
+
+  @@unique([rotationId, choreId, memberId])
+  @@index([rotationId])
+  @@index([choreId])
+  @@map("rotation_rules")
+}
+
+model ShoppingList {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String   @db.Uuid
+  title       String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  items     ShoppingItem[]
+
+  @@index([householdId])
+  @@map("shopping_lists")
+}
+
+model ShoppingItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  listId      String   @db.Uuid
+  name        String
+  quantity    Float    @default(1)
+  unit        String   @default("pcs")
+  category    String?
+  assignedTo  String?  @db.Uuid
+  isPurchased Boolean  @default(false)
+  purchasedAt DateTime?
+  price       Decimal? @db.Decimal(10, 2)
+  notes       String?
+  barcode     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  list      ShoppingList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  assignee  User?        @relation(fields: [assignedTo], references: [id])
+
+  @@index([listId])
+  @@index([assignedTo])
+  @@map("shopping_items")
+}
+
+model ChoreSwap {
+  id              String     @id @default(uuid()) @db.Uuid
+  householdId     String     @db.Uuid
+  requesterId     String     @db.Uuid
+  requestedToId   String     @db.Uuid
+  originalChoreId String     @db.Uuid
+  alternateChoreId String?    @db.Uuid
+  reason          String?
+  status          SwapStatus @default(PENDING)
+  expiresAt       DateTime?
+  decidedAt       DateTime?
+  adminOverrideId String?    @db.Uuid @unique
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  requester       User      @relation("SwapRequester", fields: [requesterId], references: [id])
+  requestedTo     User      @relation("SwapRequestedTo", fields: [requestedToId], references: [id])
+  originalChore   Chore     @relation("SwappedChore", fields: [originalChoreId], references: [id])
+  alternateChore  Chore?    @relation("AlternateChore", fields: [alternateChoreId], references: [id])
+  adminOverride   User?     @relation("AdminOverride", fields: [adminOverrideId], references: [id])
+
+  messages     SwapMessage[]
+  history      SwapHistory[]
+
+  @@index([householdId])
+  @@index([requesterId])
+  @@index([requestedToId])
+  @@index([status])
+  @@map("chore_swaps")
+}
+
+model SwapMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  swapId    String   @db.Uuid
+  senderId  String   @db.Uuid
+  message   String
+  createdAt DateTime @default(now())
+
+  swap   ChoreSwap @relation(fields: [swapId], references: [id], onDelete: Cascade)
+  sender User     @relation(fields: [senderId], references: [id])
+
+  @@index([swapId])
+  @@map("swap_messages")
+}
+
+model SwapHistory {
+  id              String     @id @default(uuid()) @db.Uuid
+  swapId          String     @db.Uuid
+  choreId         String     @db.Uuid
+  previousStatus  TaskStatus
+  newStatus       TaskStatus
+  previousAssignee String    @db.Uuid
+  newAssignee     String     @db.Uuid
+  changedById     String     @db.Uuid
+  createdAt       DateTime   @default(now())
+
+  swap       ChoreSwap @relation(fields: [swapId], references: [id], onDelete: Cascade)
+  chore      Chore     @relation(fields: [choreId], references: [id])
+  changedBy  User      @relation(fields: [changedById], references: [id])
+
+  @@index([swapId])
+  @@index([choreId])
+  @@map("swap_history")
+}
+
+model Notification {
+  id        String             @id @default(uuid()) @db.Uuid
+  userId    String             @db.Uuid
+  type      NotificationType   @default(PUSH)
+  channel   NotificationChannel
+  title     String
+  body      String?
+  data      Json?
+  isRead    Boolean            @default(false)
+  readAt    DateTime?
+  sentAt    DateTime?
+  createdAt DateTime           @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model Achievement {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  name        String
+  description String?
+  iconUrl     String?
+  points      Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+model Badge {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  name        String
+  description String?
+  iconUrl     String?
+  rarity      String   @default("common")
+  createdAt   DateTime @default(now())
+
+  userBadges  UserBadge[]
+
+  @@map("badges")
+}
+
+model UserAchievement {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  achievementId String   @db.Uuid
+  unlockedAt    DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+model UserBadge {
+  id      String   @id @default(uuid()) @db.Uuid
+  userId  String   @db.Uuid
+  badgeId String   @db.Uuid
+  earnedAt DateTime @default(now())
+
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge Badge @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
+
+model PointsHistory {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  householdId String?  @db.Uuid
+  points      Int
+  reason      String
+  referenceId String?
+  referenceType String?
+  createdAt   DateTime @default(now())
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  household Household? @relation(fields: [householdId], references: [id])
+
+  @@index([userId])
+  @@index([householdId])
+  @@map("points_history")
+}
+
+model Leaderboard {
+  id        String           @id @default(uuid()) @db.Uuid
+  householdId String         @db.Uuid
+  type      LeaderboardType  @default(WEEKLY)
+  startDate DateTime
+  endDate   DateTime
+  createdAt DateTime         @default(now())
+
+  household Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  entries   LeaderboardEntry[]
+
+  @@index([householdId, type])
+  @@map("leaderboards")
+}
+
+model LeaderboardEntry {
+  id            String   @id @default(uuid()) @db.Uuid
+  leaderboardId String   @db.Uuid
+  userId        String   @db.Uuid
+  totalPoints   Int      @default(0)
+  completedTasks Int     @default(0)
+  skippedTasks   Int     @default(0)
+  streakDays    Int      @default(0)
+  rank          Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  leaderboard Leaderboard @relation(fields: [leaderboardId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([leaderboardId, userId])
+  @@index([leaderboardId, rank])
+  @@map("leaderboard_entries")
+}
+
+model ChatMessage {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String   @db.Uuid
+  senderId    String   @db.Uuid
+  message     String
+  createdAt   DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  sender    User      @relation(fields: [senderId], references: [id])
+
+  @@index([householdId, createdAt])
+  @@map("chat_messages")
+}
+
+model AiConversation {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  householdId String?  @db.Uuid
+  prompt      String
+  response    String
+  modelUsed   String   @default("ollama")
+  tokensUsed  Int?
+  createdAt   DateTime @default(now())
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  household Household? @relation(fields: [householdId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("ai_conversations")
+}
+
+model UserSetting {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @unique @db.Uuid
+  theme           String   @default("light")
+  language        String   @default("en")
+  timezone        String   @default("UTC")
+  morningReminder Boolean  @default(true)
+  eveningReminder Boolean  @default(true)
+  overdueReminder Boolean  @default(true)
+  pushEnabled     Boolean  @default(true)
+  whatsappEnabled Boolean  @default(false)
+  emailEnabled    Boolean  @default(true)
+  fcmToken        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("user_settings")
+}
+
+model HouseholdSetting {
+  id                    String   @id @default(uuid()) @db.Uuid
+  householdId           String   @unique @db.Uuid
+  requireAdminForSwaps  Boolean  @default(false)
+  allowChildrenSwaps    Boolean  @default(false)
+  defaultPoints         Int      @default(10)
+  morningReminderTime   String   @default("08:00")
+  eveningReminderTime   String   @default("18:00")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  @@map("household_settings")
+}
+
+model HouseholdInvitation {
+  id             String             @id @default(uuid()) @db.Uuid
+  householdId    String             @db.Uuid
+  invitedById    String             @db.Uuid
+  email          String
+  role           RoleType           @default(ADULT)
+  token          String             @unique
+  status         InvitationStatus   @default(PENDING)
+  message        String?
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  declinedAt     DateTime?
+  lastRemindedAt DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  invitedBy User      @relation(fields: [invitedById], references: [id])
+
+  @@unique([householdId, email])
+  @@index([householdId])
+  @@index([token])
+  @@index([email])
+  @@index([status])
+  @@map("household_invitations")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String?  @db.Uuid
+  userId      String   @db.Uuid
+  action      String
+  entityType  String
+  entityId    String?
+  oldValue    Json?
+  newValue    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  household Household? @relation(fields: [householdId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+
+  @@index([householdId, createdAt])
+  @@index([userId, createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+model MealPlan {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String   @db.Uuid
+  recipeId    String?  @db.Uuid
+  date        DateTime
+  mealType    String
+  title       String
+  assignedTo  String?  @db.Uuid
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  recipe    Recipe?   @relation(fields: [recipeId], references: [id])
+  cook      User?     @relation(fields: [assignedTo], references: [id])
+
+  @@index([householdId, date])
+  @@map("meal_plans")
+}
+
+model Recipe {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String   @db.Uuid
+  title       String
+  description String?
+  ingredients Json?
+  instructions Json?
+  prepTime    Int?
+  cookTime    Int?
+  servings    Int?
+  imageUrl    String?
+  source      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  mealPlans MealPlan[]
+
+  @@index([householdId])
+  @@map("recipes")
+}
+
+model PetCareSchedule {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String   @db.Uuid
+  petName     String
+  petType     String
+  task        String
+  recurrence  RecurrenceType @default(DAILY)
+  assignedTo  String?  @db.Uuid
+  notes       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  caregiver User?     @relation(fields: [assignedTo], references: [id])
+
+  @@index([householdId])
+  @@map("pet_care_schedules")
+}
+
+model MaintenanceReminder {
+  id          String        @id @default(uuid()) @db.Uuid
+  householdId String        @db.Uuid
+  title       String
+  description String?
+  category    String
+  recurrence  RecurrenceType @default(MONTHLY)
+  nextDueDate DateTime
+  lastDoneAt  DateTime?
+  assignedTo  String?       @db.Uuid
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  assignee  User?     @relation(fields: [assignedTo], references: [id])
+
+  @@index([householdId])
+  @@map("maintenance_reminders")
+}
+
+model ElectricityReading {
+  id        String   @id @default(uuid()) @db.Uuid
+  householdId String @db.Uuid
+  recordedBy String  @db.Uuid
+  reading   Decimal  @db.Decimal(10, 2)
+  date      DateTime
+  notes     String?
+  imageUrl  String?
+  createdAt DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  recorder  User      @relation(fields: [recordedBy], references: [id])
+
+  @@index([householdId, date])
+  @@map("electricity_readings")
+}
+
+model WaterReading {
+  id        String   @id @default(uuid()) @db.Uuid
+  householdId String @db.Uuid
+  recordedBy String  @db.Uuid
+  reading   Decimal  @db.Decimal(10, 2)
+  date      DateTime
+  notes     String?
+  imageUrl  String?
+  createdAt DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  recorder  User      @relation(fields: [recordedBy], references: [id])
+
+  @@index([householdId, date])
+  @@map("water_readings")
+}
+
+model MedicineReminder {
+  id          String        @id @default(uuid()) @db.Uuid
+  userId      String        @db.Uuid
+  medicineName String
+  dosage      String
+  frequency   String
+  timeOfDay   String
+  startDate   DateTime
+  endDate     DateTime?
+  notes       String?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("medicine_reminders")
+}
+
+model VisitorLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String   @db.Uuid
+  firstName   String
+  lastName    String
+  phone       String?
+  email       String?
+  vehicleInfo String?
+  purpose     String?
+  hostName    String
+  checkIn     DateTime
+  checkOut    DateTime?
+  notes       String?
+  recordedBy  String   @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  recorder  User      @relation(fields: [recordedBy], references: [id])
+
+  @@index([householdId, checkIn])
+  @@map("visitor_logs")
+}
+
+model EmergencyContact {
+  id          String   @id @default(uuid()) @db.Uuid
+  householdId String   @db.Uuid
+  name        String
+  relationship String
+  phone       String
+  email       String?
+  address     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@map("emergency_contacts")
+}
+
+model ExpenseEntry {
+  id          String          @id @default(uuid()) @db.Uuid
+  householdId String          @db.Uuid
+  paidBy      String          @db.Uuid
+  category    String
+  amount      Decimal         @db.Decimal(12, 2)
+  description String
+  date        DateTime
+  splitType   String          @default("equal")
+  receiptUrl  String?
+  notes       String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  payer     User      @relation(fields: [paidBy], references: [id])
+
+  @@index([householdId, date])
+  @@map("expense_entries")
+}
+
+model Subscription {
+  id            String   @id @default(uuid()) @db.Uuid
+  householdId   String   @unique @db.Uuid
+  plan          String   @default("free")
+  status        String   @default("active")
+  stripeCustomerId String?
+  stripeSubscriptionId String?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("subscriptions")
+}

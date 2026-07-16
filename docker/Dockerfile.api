@@ -1,0 +1,100 @@
+# ============================================================
+# Stage 1: Install dependencies + build
+# ============================================================
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+# Configure pnpm to use hoisted node_modules (Docker-safe)
+RUN echo "node-linker=hoisted" > .npmrc
+
+# Copy workspace root manifests
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
+
+# Copy package manifests only (for dependency resolution caching)
+COPY apps/api/package.json ./apps/api/
+COPY packages/config/package.json ./packages/config/
+COPY packages/database/package.json ./packages/database/
+COPY packages/types/package.json ./packages/types/
+COPY packages/ui/package.json ./packages/ui/
+
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
+COPY apps/api ./apps/api
+COPY packages ./packages
+
+# Generate Prisma client
+RUN cd packages/database && npx prisma generate
+
+# Bundle the API with tsup (inlines all workspace packages)
+RUN pnpm --filter @house-os/api build
+
+# ============================================================
+# Stage 2: Production runner
+# ============================================================
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+RUN apk add --no-cache dumb-init curl
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 houseos
+
+# Copy bundled API (single file, no workspace package deps needed)
+COPY --from=builder /app/apps/api/dist ./dist
+
+# Copy Prisma schema (needed for runtime `prisma db push`)
+COPY --from=builder /app/packages/database/prisma ./packages/database/prisma
+
+# Copy Prisma client + generated client (needed at runtime)
+# Cache the generated client before npm install (which may overwrite it)
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/.prisma /prisma_cache/.prisma
+
+# Install @prisma/client (needed for runtime), then overlay generated client
+RUN printf '{"name":"houseos-api","private":true,"dependencies":{"@prisma/client":"^5.15.0"}}' > ./package.json && \
+    npm install --omit=dev 2>/dev/null && \
+    cp -r /prisma_cache/.prisma ./node_modules/.prisma && \
+    cp -r /prisma_cache/@prisma ./node_modules/@prisma
+
+# Entry script with DB readiness wait + migration
+RUN printf '#!/bin/sh\n\
+set -e\n\
+\n\
+echo "[HouseOS] Waiting for database..."\n\
+MAX_RETRIES=30\n\
+RETRY=0\n\
+until node -e "\n\
+  const { PrismaClient } = require(\"@prisma/client\");\n\
+  const p = new PrismaClient();\n\
+  p.\$queryRaw`SELECT 1`.then(() => { process.exit(0); }).catch(() => { process.exit(1); });\n\
+" 2>/dev/null; do\n\
+  RETRY=$((RETRY + 1))\n\
+  if [ $RETRY -ge $MAX_RETRIES ]; then\n\
+    echo "[HouseOS] ERROR: Database not ready after $MAX_RETRIES attempts"\n\
+    exit 1\n\
+  fi\n\
+  echo "[HouseOS] Database not ready (attempt $RETRY/$MAX_RETRIES), retrying in 3s..."\n\
+  sleep 3\n\
+done\n\
+\n\
+echo "[HouseOS] Database is ready. Running Prisma migrations..."\n\
+npx prisma db push --skip-generate 2>&1 || echo "[HouseOS] Migration warning (may be no changes needed)"\n\
+\n\
+echo "[HouseOS] Starting API server..."\n\
+exec node dist/index.js\n\
+' > /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+USER houseos
+
+EXPOSE 4000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -f http://localhost:4000/api/v1/health || exit 1
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["/app/entrypoint.sh"]
