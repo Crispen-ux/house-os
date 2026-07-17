@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api-client';
 
 interface PrimaryHousehold {
@@ -32,6 +33,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -57,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await api.logout();
     } finally {
       setUser(null);
+      router.push('/');
     }
   };
 
