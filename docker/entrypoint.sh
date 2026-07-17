@@ -35,7 +35,7 @@ done
 
 echo "[HouseOS] Database is ready. Running Prisma migrations..."
 
-node node_modules/prisma/build/index.js db push --skip-generate \
+npx prisma db push --skip-generate \
   --schema=/app/packages/database/prisma/schema.prisma \
   2>&1 || echo "[HouseOS] Migration warning (may be no changes needed)"
 

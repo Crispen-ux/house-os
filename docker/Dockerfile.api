@@ -8,7 +8,6 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
-# Build tools for native modules (sharp, etc.)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 make g++ && \
     rm -rf /var/lib/apt/lists/*
@@ -27,29 +26,18 @@ RUN pnpm install --frozen-lockfile
 COPY apps/api ./apps/api
 COPY packages ./packages
 
-# ---- Generate Prisma Client (for this platform: linux-glibc-openssl-3.x) ----
+# Generate Prisma Client (needed by tsup to resolve @prisma/client types)
 RUN cd packages/database && npx prisma generate
 
 # ---- Bundle API with tsup ----
 # Workspace packages are inlined; external require()s remain for
-# @prisma/client, express, cors, helmet, morgan, cookie-parser,
-# express-rate-limit, bcryptjs, jsonwebtoken, uuid, zod.
+# @prisma/client, express, cors, helmet, etc.
 RUN pnpm --filter @house-os/api build
 
 # ============================================================
-# Stage 2: Production dependencies (npm, no pnpm workspace)
-# ============================================================
-FROM node:20-bookworm-slim AS deps
-WORKDIR /app
-
-COPY --from=builder /app/apps/api/package.json ./package.json
-# Strip devDependencies — npm cannot parse pnpm "workspace:*" protocol
-RUN node -e "const p=JSON.parse(require('fs').readFileSync('package.json','utf8'));delete p.devDependencies;require('fs').writeFileSync('package.json',JSON.stringify(p))" && \
-    npm install --omit=dev
-
-# ============================================================
-# Stage 3: Runner
-# Same base image as builder → Prisma engine binaries are compatible.
+# Stage 2: Runner
+# Production deps + fresh Prisma generate for the runtime platform.
+# No manual copying of .prisma, @prisma, prisma, or engine folders.
 # ============================================================
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
@@ -58,26 +46,27 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends dumb-init curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Non-root user (Debian useradd, not Alpine adduser)
+# Non-root user
 RUN groupadd --system --gid 1001 nodejs && \
     useradd  --system --uid 1001 --gid 1001 houseos
 
-# ---- Application bundle ----
+# ---- Production dependencies ----
+# prisma CLI is in production deps (moved from devDeps) so it survives --omit=dev.
+# Strip pnpm workspace:* protocol before npm install (npm can't parse it).
+COPY --from=builder /app/apps/api/package.json ./package.json
+RUN node -e " \
+  const p = JSON.parse(require('fs').readFileSync('package.json','utf8')); \
+  delete p.devDependencies; \
+  require('fs').writeFileSync('package.json', JSON.stringify(p)); \
+" && npm install --omit=dev
+
+# ---- Application bundle (tsup output — workspace packages inlined) ----
 COPY --from=builder /app/apps/api/dist ./dist
 
-# ---- Production node_modules (from deps stage) ----
-COPY --from=deps /app/node_modules ./node_modules
-
-# ---- Prisma: CLI + engines from builder (glibc binaries) ----
-# @prisma/client is in node_modules from deps stage.
-# .prisma/client/ is generated fresh below to guarantee version match.
-COPY --from=builder /app/node_modules/prisma          ./node_modules/prisma
-COPY --from=builder /app/node_modules/@prisma/engines  ./node_modules/@prisma/engines
-
-# ---- Prisma schema + generate client for this runtime ----
+# ---- Prisma schema + generate client for this runtime platform ----
+# This downloads the correct engine binary (linux-glibc / ARM64 / AMD64).
 COPY --from=builder /app/packages/database/prisma ./packages/database/prisma
-RUN node node_modules/prisma/build/index.js generate \
-      --schema=./packages/database/prisma/schema.prisma
+RUN npx prisma generate --schema=./packages/database/prisma/schema.prisma
 
 # ---- Entrypoint ----
 COPY docker/entrypoint.sh /app/entrypoint.sh
