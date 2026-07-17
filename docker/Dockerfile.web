@@ -1,60 +1,61 @@
 # ============================================================
-# Stage 1: Install dependencies + build
+# Stage 1: Builder
 # ============================================================
-FROM node:20-alpine AS builder
+FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
-# Configure pnpm for Docker
-RUN echo "node-linker=hoisted" > .npmrc
+# Build tools for native modules
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy workspace root manifests
+# ---- Workspace manifests ----
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
-
-# Copy package manifests only (for dependency resolution caching)
 COPY apps/web/package.json ./apps/web/
-COPY packages/config/package.json ./packages/config/
-COPY packages/database/package.json ./packages/database/
-COPY packages/types/package.json ./packages/types/
-COPY packages/ui/package.json ./packages/ui/
+COPY packages/config/package.json    ./packages/config/
+COPY packages/database/package.json  ./packages/database/
+COPY packages/types/package.json     ./packages/types/
+COPY packages/ui/package.json        ./packages/ui/
 
 RUN pnpm install --frozen-lockfile
 
-# Copy source code
+# ---- Source code ----
 COPY apps/web ./apps/web
 COPY packages ./packages
 
-# Generate Prisma client (needed for type resolution)
+# Generate Prisma client (needed for type resolution in web build)
 RUN cd packages/database && npx prisma generate
 
-# Build-time API URL (baked into the static bundle)
+# Inject standalone output for Docker (injected at build time, not in source
+# to avoid Windows symlink permission errors during local dev builds)
+RUN sed -i "s/const nextConfig: NextConfig = {/const nextConfig: NextConfig = {\n  output: 'standalone',/" apps/web/next.config.ts
+
+# Build-time API URL (baked into the client bundle)
 ARG NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-
-# Inject standalone output for Docker (fails on Windows due to symlink perms)
-RUN sed -i "s/const nextConfig: NextConfig = {/const nextConfig: NextConfig = {\n  output: 'standalone',/" apps/web/next.config.ts
 
 RUN pnpm --filter @house-os/web build
 
 # ============================================================
-# Stage 2: Production runner (standalone)
+# Stage 2: Runner (Next.js standalone output)
 # ============================================================
-FROM node:20-alpine AS runner
+FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init curl
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends dumb-init curl && \
+    rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+# Non-root user
+RUN groupadd --system --gid 1001 nodejs && \
+    useradd  --system --uid 1001 --gid 1001 nextjs
 
-# Copy standalone output (minimal Node.js server)
+# Next.js standalone output includes only the files needed to run
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
-# Copy static assets
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
-# Copy public assets
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public    ./apps/web/public
 
 USER nextjs
 

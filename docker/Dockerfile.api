@@ -1,12 +1,17 @@
 # ============================================================
 # Stage 1: Builder
-# Install workspace deps, generate Prisma client, bundle API.
+# Full workspace install → Prisma generate → tsup bundle.
+# Uses Bookworm (glibc + OpenSSL 3) for ARM64/AMD64 compat.
 # ============================================================
-FROM node:20-alpine AS builder
+FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
-RUN echo "node-linker=hoisted" > .npmrc
+
+# Build tools for native modules (sharp, etc.)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
 
 # ---- Workspace manifests (dependency cache layer) ----
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
@@ -22,59 +27,57 @@ RUN pnpm install --frozen-lockfile
 COPY apps/api ./apps/api
 COPY packages ./packages
 
-# ---- Generate Prisma Client ----
+# ---- Generate Prisma Client (for this platform: linux-glibc-openssl-3.x) ----
 RUN cd packages/database && npx prisma generate
 
-# ---- Bundle API with tsup (single dist/index.js, ~98KB) ----
+# ---- Bundle API with tsup ----
+# Workspace packages are inlined; external require()s remain for
+# @prisma/client, express, cors, helmet, morgan, cookie-parser,
+# express-rate-limit, bcryptjs, jsonwebtoken, uuid, zod.
 RUN pnpm --filter @house-os/api build
 
 # ============================================================
-# Stage 2: Production dependencies (clean npm, no pnpm workspace)
-# Uses full Debian node image for build tool compatibility (sharp, etc.)
-# Only node_modules is copied to the runner — this stage is discarded.
+# Stage 2: Production dependencies (npm, no pnpm workspace)
 # ============================================================
-FROM node:20-slim AS deps
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 
-# Install only the API's production dependencies.
-# npm reads the API's package.json and installs exactly what's listed
-# under "dependencies" — no workspace packages, no devDependencies.
 COPY --from=builder /app/apps/api/package.json ./package.json
-# Remove devDependencies — npm chokes on "workspace:*" protocol even with --omit=dev
+# Strip devDependencies — npm cannot parse pnpm "workspace:*" protocol
 RUN node -e "const p=JSON.parse(require('fs').readFileSync('package.json','utf8'));delete p.devDependencies;require('fs').writeFileSync('package.json',JSON.stringify(p))" && \
     npm install --omit=dev
 
 # ============================================================
 # Stage 3: Runner
-# Minimal production image. No install step, no build tools.
+# Same base image as builder → Prisma engine binaries are compatible.
 # ============================================================
-FROM node:20-alpine AS runner
+FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init curl
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends dumb-init curl && \
+    rm -rf /var/lib/apt/lists/*
 
-# Non-root user
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 houseos
+# Non-root user (Debian useradd, not Alpine adduser)
+RUN groupadd --system --gid 1001 nodejs && \
+    useradd  --system --uid 1001 --gid 1001 houseos
 
-# ---- Application ----
+# ---- Application bundle ----
 COPY --from=builder /app/apps/api/dist ./dist
 
 # ---- Production node_modules (from deps stage) ----
 COPY --from=deps /app/node_modules ./node_modules
 
-# ---- Prisma artifacts (schema + CLI + generated client + engines) ----
-# The deps stage installs @prisma/client but NOT:
-#   - .prisma/client/  (generated client — output of `prisma generate`)
-#   - prisma/          (CLI — devDependency, needed for `prisma db push`)
-#   - @prisma/engines/ (native query engine — dependency of prisma CLI)
-# We copy all three from the builder where they were fully resolved.
-COPY --from=builder /app/node_modules/.prisma      ./node_modules/.prisma
-COPY --from=builder /app/node_modules/prisma        ./node_modules/prisma
-COPY --from=builder /app/node_modules/@prisma       ./node_modules/@prisma
+# ---- Prisma: CLI + engines from builder (glibc binaries) ----
+# @prisma/client is in node_modules from deps stage.
+# .prisma/client/ is generated fresh below to guarantee version match.
+COPY --from=builder /app/node_modules/prisma          ./node_modules/prisma
+COPY --from=builder /app/node_modules/@prisma/engines  ./node_modules/@prisma/engines
 
-# ---- Prisma schema (needed at startup for `prisma db push`) ----
-COPY --from=builder /app/packages/database/prisma   ./packages/database/prisma
+# ---- Prisma schema + generate client for this runtime ----
+COPY --from=builder /app/packages/database/prisma ./packages/database/prisma
+RUN node node_modules/prisma/build/index.js generate \
+      --schema=./packages/database/prisma/schema.prisma
 
 # ---- Entrypoint ----
 COPY docker/entrypoint.sh /app/entrypoint.sh
