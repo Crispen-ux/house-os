@@ -1,10 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import * as authService from './auth.service';
-import { isProd } from '@house-os/config';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: isProd,
+  secure: process.env.COOKIE_SECURE === 'true',
   sameSite: 'lax' as const,
   path: '/',
 };

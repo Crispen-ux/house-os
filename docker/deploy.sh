@@ -81,6 +81,7 @@ SMTP_PORT=587
 SMTP_USER=
 SMTP_PASS=
 SMTP_FROM=noreply@houseos.app
+COOKIE_SECURE=false
 EOF
   echo "Created $ENV_FILE"
 else
