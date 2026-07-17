@@ -17,8 +17,8 @@ function setAuthCookies(res: Response, tokens: { accessToken: string; refreshTok
 }
 
 function clearAuthCookies(res: Response) {
-  res.clearCookie('accessToken', { path: '/' });
-  res.clearCookie('refreshToken', { path: '/' });
+  res.clearCookie('accessToken', { path: '/', httpOnly: true, secure: process.env.COOKIE_SECURE === 'true', sameSite: 'lax' });
+  res.clearCookie('refreshToken', { path: '/', httpOnly: true, secure: process.env.COOKIE_SECURE === 'true', sameSite: 'lax' });
 }
 
 export async function register(req: Request, res: Response, next: NextFunction) {
