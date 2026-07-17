@@ -25,6 +25,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, firstName: string, lastName: string) => Promise<void>;
   logout: () => Promise<void>;
+  refetchUser: () => Promise<void>;
   isAuthenticated: boolean;
 }
 
@@ -56,8 +57,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
+  const refetchUser = async () => {
+    try {
+      const res = await api.get<{ success: boolean; data: User }>('/auth/me');
+      setUser(res.data);
+    } catch {
+      setUser(null);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refetchUser, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );

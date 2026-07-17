@@ -15,6 +15,7 @@ import { Plus, Home } from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { useAuth } from '@/hooks/use-auth';
 
 const container = {
   hidden: { opacity: 0 },
@@ -28,6 +29,7 @@ const item = {
 
 export default function HouseholdsPage() {
   const queryClient = useQueryClient();
+  const { refetchUser } = useAuth();
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState('');
 
@@ -38,8 +40,9 @@ export default function HouseholdsPage() {
 
   const createMutation = useMutation({
     mutationFn: () => api.post('/households', { name }),
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['households'] });
+      await refetchUser();
       setShowCreate(false);
       setName('');
       toast.success('Household created!');

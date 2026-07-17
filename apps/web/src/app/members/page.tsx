@@ -12,10 +12,12 @@ import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InviteMemberModal } from '@/components/invite-member-modal';
-import { Users, UserPlus, Mail, Clock, XCircle, Copy, CheckCircle } from 'lucide-react';
+import { Users, UserPlus, Mail, Clock, XCircle, Copy, CheckCircle, Plus } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
+import { useEffect } from 'react';
+import Link from 'next/link';
 
 const container = {
   hidden: { opacity: 0 },
@@ -28,10 +30,16 @@ const item = {
 };
 
 export default function MembersPage() {
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
   const householdId = user?.primaryHousehold?.id;
   const [showInvite, setShowInvite] = useState(false);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!householdId) {
+      refetchUser();
+    }
+  }, []);
 
   const { data: household, isLoading } = useQuery({
     queryKey: ['household', householdId],
@@ -76,7 +84,14 @@ export default function MembersPage() {
           <EmptyState
             icon={<Users className="h-7 w-7" />}
             title="No household selected"
-            description="Create or join a household first"
+            description="Create a household first, then come back to manage members"
+            action={
+              <Link href="/households">
+                <Button size="sm">
+                  <Plus className="mr-1 h-3.5 w-3.5" /> Create Household
+                </Button>
+              </Link>
+            }
           />
         ) : isLoading ? (
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
