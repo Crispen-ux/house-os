@@ -40,7 +40,9 @@ WORKDIR /app
 # npm reads the API's package.json and installs exactly what's listed
 # under "dependencies" — no workspace packages, no devDependencies.
 COPY --from=builder /app/apps/api/package.json ./package.json
-RUN npm install --omit=dev
+# Remove devDependencies — npm chokes on "workspace:*" protocol even with --omit=dev
+RUN node -e "const p=JSON.parse(require('fs').readFileSync('package.json','utf8'));delete p.devDependencies;require('fs').writeFileSync('package.json',JSON.stringify(p))" && \
+    npm install --omit=dev
 
 # ============================================================
 # Stage 3: Runner
