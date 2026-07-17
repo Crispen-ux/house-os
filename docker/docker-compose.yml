@@ -45,11 +45,12 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.web
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000/api/v1}
+        NEXT_PUBLIC_API_URL: /api/v1
     container_name: houseos-web
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      API_BACKEND_URL: http://houseos-api:4000
     ports:
       - "${WEB_PORT:-3000}:3000"
     networks:
