@@ -11,6 +11,7 @@ dist
 .idea
 .DS_Store
 docker
+!docker/entrypoint.sh
 apps/mobile
 **/node_modules
 **/.next

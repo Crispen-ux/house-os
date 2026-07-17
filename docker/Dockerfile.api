@@ -75,7 +75,7 @@ COPY --from=builder /deploy .
 # Copy Prisma schema (needed by `prisma db push` at startup)
 COPY --from=builder /app/packages/database/prisma /app/packages/database/prisma
 
-# Copy entrypoint script
+# Copy entrypoint (whitelisted in .dockerignore)
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
