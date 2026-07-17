@@ -30,8 +30,10 @@ RUN pnpm --filter @house-os/api build
 
 # ============================================================
 # Stage 2: Production dependencies (clean npm, no pnpm workspace)
+# Uses full Debian node image for build tool compatibility (sharp, etc.)
+# Only node_modules is copied to the runner — this stage is discarded.
 # ============================================================
-FROM node:20-alpine AS deps
+FROM node:20-slim AS deps
 WORKDIR /app
 
 # Install only the API's production dependencies.
