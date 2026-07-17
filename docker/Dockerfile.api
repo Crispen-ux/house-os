@@ -1,17 +1,14 @@
 # ============================================================
 # Stage 1: Builder
-# Install all deps, generate Prisma client, bundle API with tsup,
-# then create a deployable artifact with production deps only.
+# Install workspace deps, generate Prisma client, bundle API.
 # ============================================================
 FROM node:20-alpine AS builder
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
-
-# pnpm hoisted linker — flat node_modules, no symlinks (Docker-safe)
 RUN echo "node-linker=hoisted" > .npmrc
 
-# ---- Copy workspace manifests (for dependency resolution caching) ----
+# ---- Workspace manifests (dependency cache layer) ----
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
 COPY apps/api/package.json           ./apps/api/
 COPY packages/config/package.json    ./packages/config/
@@ -21,51 +18,31 @@ COPY packages/ui/package.json        ./packages/ui/
 
 RUN pnpm install --frozen-lockfile
 
-# ---- Copy source code ----
+# ---- Source code ----
 COPY apps/api ./apps/api
 COPY packages ./packages
 
 # ---- Generate Prisma Client ----
-# Runs prisma generate which writes the query engine + client
-# to node_modules/.prisma/client/ (relative to hoisted node_modules).
 RUN cd packages/database && npx prisma generate
 
-# ---- Bundle API with tsup ----
-# tsup inlines @house-os/config, @house-os/database, @house-os/types
-# and other small deps into a single dist/index.js (~98KB).
-# External require() calls remain for: @prisma/client, express, cors,
-# helmet, morgan, cookie-parser, express-rate-limit, bcryptjs,
-# jsonwebtoken, uuid, zod.
+# ---- Bundle API with tsup (single dist/index.js, ~98KB) ----
 RUN pnpm --filter @house-os/api build
 
-# ---- Deploy: standalone artifact with production deps only ----
-# pnpm deploy copies the built package (dist/ included) and installs
-# only the production dependencies from the lockfile.
-# Workspace packages are devDependencies → excluded (already bundled).
-#
-# IMPORTANT: Remove .prisma before deploy — pnpm deploy chokes on the
-# symlinks that `prisma generate` created (EEXIST on client_tmp).
-RUN rm -rf /app/node_modules/.prisma && \
-    pnpm --filter @house-os/api deploy --prod /deploy
+# ============================================================
+# Stage 2: Production dependencies (clean npm, no pnpm workspace)
+# ============================================================
+FROM node:20-alpine AS deps
+WORKDIR /app
 
-# ---- Restore Prisma runtime artifacts ----
-# pnpm deploy --prod installs @prisma/client but NOT:
-#   1. .prisma/client/  — generated client (output of `prisma generate`)
-#   2. prisma/          — CLI package (devDependency, needed for `prisma db push`)
-#   3. @prisma/engines/ — dependency of the prisma CLI
-# Re-generate the client into /deploy using the builder's prisma binary,
-# then copy the CLI + engines so `node node_modules/prisma/build/index.js` works at runtime.
-RUN cp -r /app/node_modules/prisma          /deploy/node_modules/prisma && \
-    cp -r /app/node_modules/@prisma/engines /deploy/node_modules/@prisma/engines && \
-    mkdir -p /deploy/node_modules/.bin && \
-    ln -sf ../prisma/build/index.js          /deploy/node_modules/.bin/prisma && \
-    cd /deploy && \
-    /app/node_modules/.bin/prisma generate \
-      --schema=/app/packages/database/prisma/schema.prisma
+# Install only the API's production dependencies.
+# npm reads the API's package.json and installs exactly what's listed
+# under "dependencies" — no workspace packages, no devDependencies.
+COPY --from=builder /app/apps/api/package.json ./package.json
+RUN npm install --omit=dev
 
 # ============================================================
-# Stage 2: Runner
-# Minimal production image. No npm install, no build tools.
+# Stage 3: Runner
+# Minimal production image. No install step, no build tools.
 # ============================================================
 FROM node:20-alpine AS runner
 WORKDIR /app
@@ -76,13 +53,26 @@ RUN apk add --no-cache dumb-init curl
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 houseos
 
-# Copy the deployed application (dist/ + node_modules/ + package.json)
-COPY --from=builder /deploy .
+# ---- Application ----
+COPY --from=builder /app/apps/api/dist ./dist
 
-# Copy Prisma schema (needed by `prisma db push` at startup)
-COPY --from=builder /app/packages/database/prisma /app/packages/database/prisma
+# ---- Production node_modules (from deps stage) ----
+COPY --from=deps /app/node_modules ./node_modules
 
-# Copy entrypoint (whitelisted in .dockerignore)
+# ---- Prisma artifacts (schema + CLI + generated client + engines) ----
+# The deps stage installs @prisma/client but NOT:
+#   - .prisma/client/  (generated client — output of `prisma generate`)
+#   - prisma/          (CLI — devDependency, needed for `prisma db push`)
+#   - @prisma/engines/ (native query engine — dependency of prisma CLI)
+# We copy all three from the builder where they were fully resolved.
+COPY --from=builder /app/node_modules/.prisma      ./node_modules/.prisma
+COPY --from=builder /app/node_modules/prisma        ./node_modules/prisma
+COPY --from=builder /app/node_modules/@prisma       ./node_modules/@prisma
+
+# ---- Prisma schema (needed at startup for `prisma db push`) ----
+COPY --from=builder /app/packages/database/prisma   ./packages/database/prisma
+
+# ---- Entrypoint ----
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
