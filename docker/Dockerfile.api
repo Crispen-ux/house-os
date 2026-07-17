@@ -42,19 +42,26 @@ RUN pnpm --filter @house-os/api build
 # pnpm deploy copies the built package (dist/ included) and installs
 # only the production dependencies from the lockfile.
 # Workspace packages are devDependencies → excluded (already bundled).
-RUN pnpm --filter @house-os/api deploy --prod /deploy
+#
+# IMPORTANT: Remove .prisma before deploy — pnpm deploy chokes on the
+# symlinks that `prisma generate` created (EEXIST on client_tmp).
+RUN rm -rf /app/node_modules/.prisma && \
+    pnpm --filter @house-os/api deploy --prod /deploy
 
-# ---- Fix Prisma runtime artifacts ----
+# ---- Restore Prisma runtime artifacts ----
 # pnpm deploy --prod installs @prisma/client but NOT:
 #   1. .prisma/client/  — generated client (output of `prisma generate`)
 #   2. prisma/          — CLI package (devDependency, needed for `prisma db push`)
 #   3. @prisma/engines/ — dependency of the prisma CLI
-# We copy these from the builder's hoisted node_modules into /deploy.
-RUN cp -r /app/node_modules/.prisma       /deploy/node_modules/.prisma && \
-    cp -r /app/node_modules/prisma        /deploy/node_modules/prisma && \
+# Re-generate the client into /deploy using the builder's prisma binary,
+# then copy the CLI + engines so `node node_modules/prisma/build/index.js` works at runtime.
+RUN cp -r /app/node_modules/prisma          /deploy/node_modules/prisma && \
     cp -r /app/node_modules/@prisma/engines /deploy/node_modules/@prisma/engines && \
     mkdir -p /deploy/node_modules/.bin && \
-    ln -sf ../prisma/build/index.js        /deploy/node_modules/.bin/prisma
+    ln -sf ../prisma/build/index.js          /deploy/node_modules/.bin/prisma && \
+    cd /deploy && \
+    /app/node_modules/.bin/prisma generate \
+      --schema=/app/packages/database/prisma/schema.prisma
 
 # ============================================================
 # Stage 2: Runner
