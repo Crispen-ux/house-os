@@ -1,7 +1,5 @@
 import type { NextConfig } from 'next';
 
-const API_BACKEND = process.env.API_BACKEND_URL || 'http://localhost:4000';
-
 const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
@@ -14,10 +12,11 @@ const nextConfig: NextConfig = {
     ],
   },
   async rewrites() {
+    const apiBackend = process.env.API_BACKEND_URL || 'http://localhost:4000';
     return [
       {
         source: '/api/:path*',
-        destination: `${API_BACKEND}/api/:path*`,
+        destination: `${apiBackend}/api/:path*`,
       },
     ];
   },
