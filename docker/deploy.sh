@@ -74,7 +74,9 @@ API_PORT=4000
 WEB_PORT=3000
 
 AI_PROVIDER=ollama
-OLLAMA_MODEL=llama3
+# Model must be pulled on the Ollama instance before use:
+# docker exec ollama ollama pull llama3.2:1b
+OLLAMA_MODEL=llama3.2:1b
 
 SMTP_HOST=
 SMTP_PORT=587
