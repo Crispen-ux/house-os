@@ -19,26 +19,36 @@ const AI_TOOLS = [
     function: {
       name: 'add_shopping_item',
       description:
-        'Add an item to the household shopping list. Use when the user wants to buy something, needs groceries, or wants to add anything to their shopping list.',
+        'Add one or more items to the household shopping list. For a single item, pass an array with one entry. Use when the user wants to buy something or add anything to their shopping list.',
       parameters: {
         type: 'object',
-        required: ['item_name'],
+        required: ['items'],
         properties: {
-          item_name: {
-            type: 'string',
-            description: 'Name of the item to add (e.g. "milk", "paper towels")',
-          },
-          quantity: {
-            type: 'number',
-            description: 'How many to buy (default 1)',
-          },
-          unit: {
-            type: 'string',
-            description: 'Unit of measurement (e.g. "pcs", "kg", "liters", "packs")',
-          },
-          category: {
-            type: 'string',
-            description: 'Category for grouping (e.g. "dairy", "produce", "cleaning")',
+          items: {
+            type: 'array',
+            description: 'One or more items to add to the shopping list',
+            items: {
+              type: 'object',
+              required: ['item_name'],
+              properties: {
+                item_name: {
+                  type: 'string',
+                  description: 'Name of the item (e.g. "milk")',
+                },
+                quantity: {
+                  type: 'number',
+                  description: 'How many to buy (default 1)',
+                },
+                unit: {
+                  type: 'string',
+                  description: 'Unit of measurement (e.g. "pcs", "kg", "liters")',
+                },
+                category: {
+                  type: 'string',
+                  description: 'Category for grouping (e.g. "dairy")',
+                },
+              },
+            },
           },
         },
       },
@@ -188,26 +198,28 @@ async function executeTool(
         throw new AppError(400, 'No shopping list found. Create one first via the Shopping page.');
       }
       const list = lists[0];
-      const item = await shoppingService.addItem(
-        list.id,
-        {
-          name: args.item_name,
-          quantity: args.quantity,
-          unit: args.unit,
-          category: args.category,
-        },
-        context.userId,
-      );
-      return JSON.stringify({
-        success: true,
-        item: {
-          id: item.id,
-          name: item.name,
-          quantity: item.quantity,
-          unit: item.unit,
-          list: list.title,
-        },
-      });
+      const rawItems = Array.isArray(args.items) ? args.items : args.items ? [args.items] : [];
+      if (!rawItems.length) {
+        throw new AppError(400, 'No items provided. Pass an items array with at least one entry.');
+      }
+      const created = [];
+      for (const entry of rawItems) {
+        if (!entry || !entry.item_name || typeof entry.item_name !== 'string' || !entry.item_name.trim()) {
+          throw new AppError(400, 'Each item must have a non-empty item_name string.');
+        }
+        const item = await shoppingService.addItem(
+          list.id,
+          {
+            name: entry.item_name.trim(),
+            quantity: entry.quantity,
+            unit: entry.unit,
+            category: entry.category,
+          },
+          context.userId,
+        );
+        created.push({ id: item.id, name: item.name, quantity: item.quantity, unit: item.unit });
+      }
+      return JSON.stringify({ success: true, list: list.title, items: created });
     }
 
     case 'request_chore_swap': {
@@ -301,6 +313,7 @@ Instructions:
 - You have tools to add shopping items, request chore swaps, view chores, and view shopping lists.
 - When the user asks you to do something actionable, use the appropriate tool.
 - When using a tool, do NOT describe what you will do — just call the tool. The system will confirm what was done.
+- Do NOT call get_shopping_list or get_my_chores before an add/request action unless the user explicitly asks to see the current list first — go straight to the action.
 - When the user asks a read-only question, answer directly using the context above.
 - Be friendly and conversational.
 - Keep responses concise and helpful.
