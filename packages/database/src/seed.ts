@@ -46,6 +46,98 @@ async function main() {
     });
   }
 
+  // ============================================================
+  // Chores — seeded for "The Residence" household
+  // Based on the household's weekly/monthly chore chart
+  // ============================================================
+  const household = await prisma.household.findFirst({
+    where: { name: 'The Residence' },
+  });
+
+  if (!household) {
+    console.warn('Household "The Residence" not found — skipping chore seed. Create the household first.');
+  } else {
+    const chores = [
+      {
+        category: 'KITCHEN' as const,
+        title: 'Weekday Cooking',
+        description: 'Cook dinner on assigned weekday (Mon-Fri)',
+        points: 15,
+        recurrence: 'DAILY' as const,
+        estimatedMinutes: 45,
+      },
+      {
+        category: 'KITCHEN' as const,
+        title: 'Dishes',
+        description: 'Wash and put away dishes for the day (Mon-Sun)',
+        points: 10,
+        recurrence: 'DAILY' as const,
+        estimatedMinutes: 20,
+      },
+      {
+        category: 'CLEANING' as const,
+        title: 'Sweep Common Areas',
+        description: 'Sweep living room, hallway, and common areas',
+        points: 10,
+        recurrence: 'WEEKLY' as const,
+        estimatedMinutes: 15,
+      },
+      {
+        category: 'CLEANING' as const,
+        title: 'Take Out Rubbish',
+        description: 'Take out household rubbish/bins',
+        points: 5,
+        recurrence: 'WEEKLY' as const,
+        estimatedMinutes: 10,
+      },
+      {
+        category: 'CLEANING' as const,
+        title: 'Deep Clean Entire House',
+        description: 'Monthly rotation: deep clean the whole house',
+        points: 40,
+        recurrence: 'MONTHLY' as const,
+        estimatedMinutes: 120,
+      },
+      {
+        category: 'CLEANING' as const,
+        title: 'Clean Kitchen & 4 Bathrooms',
+        description: 'Monthly rotation: deep clean kitchen and all bathrooms',
+        points: 35,
+        recurrence: 'MONTHLY' as const,
+        estimatedMinutes: 90,
+      },
+      {
+        category: 'LAUNDRY' as const,
+        title: 'Laundry (Wash, Dry, Fold)',
+        description: 'Monthly rotation: wash, dry, and fold household laundry',
+        points: 25,
+        recurrence: 'MONTHLY' as const,
+        estimatedMinutes: 60,
+      },
+      {
+        category: 'KITCHEN' as const,
+        title: 'Saturday Cooking',
+        description: 'Monthly rotation: cook on Saturday',
+        points: 20,
+        recurrence: 'MONTHLY' as const,
+        estimatedMinutes: 60,
+      },
+    ];
+
+    for (const chore of chores) {
+      const existing = await prisma.chore.findFirst({
+        where: { householdId: household.id, title: chore.title },
+      });
+      if (existing) {
+        await prisma.chore.update({ where: { id: existing.id }, data: chore });
+      } else {
+        await prisma.chore.create({ data: { ...chore, householdId: household.id } });
+      }
+    }
+
+    console.log(`Seeded ${chores.length} chores for household "${household.name}"`);
+  }
+
   console.log('Seed completed successfully');
 }
 
